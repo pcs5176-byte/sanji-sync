@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>산지한상 Cafe24 동기화</title>
+    <style>
+      :root { color-scheme: light; font-family: system-ui, -apple-system, sans-serif; }
+      body { margin: 0; background: #f4f7f3; color: #18301f; }
+      main { max-width: 680px; margin: 10vh auto; padding: 40px; background: white; border-radius: 22px; box-shadow: 0 16px 50px #17351c18; }
+      h1 { margin-top: 0; font-size: 2rem; }
+      p { line-height: 1.65; color: #48614e; }
+      .meta { padding: 16px; background: #eef5ee; border-radius: 12px; }
+      a.button { display: inline-block; margin-top: 18px; padding: 13px 18px; border-radius: 10px; background: #236b36; color: white; text-decoration: none; font-weight: 700; }
+      button { margin: 18px 0 0 8px; padding: 13px 18px; border: 1px solid #236b36; border-radius: 10px; background: white; color: #236b36; font-weight: 700; cursor: pointer; }
+      code { color: #164d27; }
+      #status { font-weight: 700; }
+      input[type="number"] { width: 90px; padding: 11px; border: 1px solid #b7c8ba; border-radius: 8px; }
+      input[type="file"] { display: block; margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>산지한상 상품 동기화</h1>
+      <p>Cafe24 쇼핑몰과 안전하게 연결하기 위한 OAuth 서비스입니다. 액세스 토큰과 리프레시 토큰은 암호화되어 보관되며 화면이나 로그에 표시되지 않습니다.</p>
+      <div class="meta">
+        <div>mall_id: <code>cokorzone001</code></div>
+        <div>shop_no: <code>3</code></div>
+        <div>연결 상태: <span id="status">확인 중…</span></div>
+        <div>자동 실행 연결: <span id="storage">확인 중…</span></div>
+      </div>
+      <a class="button" href="/api/cafe24/connect">Cafe24 연결하기</a>
+      <button id="verify" type="button">shop_no=3 연결 검증</button>
+      <p id="verify-result" aria-live="polite"></p>
+      <button id="preview" type="button">상품 동기화 미리보기</button>
+      <p id="preview-result" aria-live="polite"></p>
+      <button id="run" type="button" disabled>가격·품절 지금 반영</button>
+      <p id="run-result" aria-live="polite"></p>
+      <button id="import" type="button" disabled>누락 신규상품 6개 숨김 등록</button>
+      <p id="import-result" aria-live="polite"></p>
+      <div>
+        <label for="detail-start">상세정보 시작 상품번호</label>
+        <input id="detail-start" type="number" min="1" value="127" />
+        <button id="detail" type="button" disabled>상세정보 다음 25개 반영</button>
+      </div>
+      <p id="detail-result" aria-live="polite"></p>
+      <div class="meta">
+        <strong>상품 썸네일 일괄 연결</strong>
+        <p>파일명에 <code>HARU-G0001</code> 형식의 상품코드가 포함된 이미지를 선택하세요.</p>
+        <input id="thumbnail-files" type="file" multiple accept="image/png,image/jpeg,image/webp" />
+        <button id="thumbnail-upload" type="button" disabled>선택한 썸네일 연결</button>
+        <button id="hosted-thumbnail-upload" type="button" disabled>준비된 썸네일 28개 연결</button>
+        <p id="thumbnail-result" aria-live="polite"></p>
+      </div>
+    </main>
+    <script>
+      const storedDetailStart = Number(localStorage.getItem('sanji-detail-start'));
+      if (Number.isFinite(storedDetailStart) && storedDetailStart > 0) {
+        document.querySelector('#detail-start').value = storedDetailStart;
+      }
+      fetch('/api/cafe24/status', { credentials: 'same-origin' })
+        .then((r) => r.json())
+        .then((data) => {
+          document.querySelector('#status').textContent = data.connected ? '연결됨' : '연결 전';
+          document.querySelector('#storage').textContent = data.persistent_connected
+            ? '활성'
+            : (data.persistent_store_configured ? '재연결 필요' : '설정 전');
+        })
+        .catch(() => { document.querySelector('#status').textContent = '확인 불가'; });
+      fetch('/api/health')
+        .then((r) => r.json())
+        .then((data) => {
+          document.querySelector('#run').disabled = !data?.cafe24?.product_sync_write_enabled;
+          document.querySelector('#import').disabled = !data?.cafe24?.product_sync_write_enabled;
+          document.querySelector('#detail').disabled = !data?.cafe24?.product_sync_write_enabled;
+          document.querySelector('#thumbnail-upload').disabled = !data?.cafe24?.product_sync_write_enabled;
+          document.querySelector('#hosted-thumbnail-upload').disabled = !data?.cafe24?.product_sync_write_enabled;
+        })
+        .catch(() => {});
+      document.querySelector('#verify').addEventListener('click', () => {
+        const result = document.querySelector('#verify-result');
+        result.textContent = '검증 중…';
+        fetch('/api/cafe24/verify', { credentials: 'same-origin' })
+          .then(async (response) => ({ ok: response.ok, body: await response.json() }))
+          .then(({ ok, body }) => {
+            result.textContent = ok
+              ? `검증 완료: ${body.shop_no}번 쇼핑몰 상품 읽기 가능 (현재 ${body.product_count ?? '확인 불가'}개)`
+              : `검증 실패: ${body.error || 'unknown_error'}`;
+          })
+          .catch(() => { result.textContent = '검증 실패: network_error'; });
+      });
+      document.querySelector('#preview').addEventListener('click', () => {
+        const result = document.querySelector('#preview-result');
+        result.textContent = '실시간 하루팜 상품을 비교 중…';
+        fetch('/api/sync/preview', { credentials: 'same-origin' })
+          .then(async (response) => ({ ok: response.ok, body: await response.json() }))
+          .then(({ ok, body }) => {
+            result.textContent = ok
+              ? `DRY RUN: ${body.matched_products}/${body.source_products}개 상품 매칭, 옵션 ${body.matched_options}/${body.source_options}개 매칭. 판매가 ${body.sale_price_changes}개·소비자가 ${body.retail_price_changes}개·옵션가 ${body.option_price_changes}개·품절 ${body.sold_out_changes ?? 0}개 차이.${body.change_samples?.length ? ` 차이 예: ${body.change_samples[0].product_code} ${body.change_samples[0].product_name} (판매가 ${body.change_samples[0].current_sale_price}→${body.change_samples[0].expected_sale_price}, 소비자가 ${body.change_samples[0].current_retail_price}→${body.change_samples[0].expected_retail_price}${body.change_samples[0].option_price_changes?.length ? `, 옵션 ${body.change_samples[0].option_price_changes[0].option_label} ${body.change_samples[0].option_price_changes[0].current_additional_amount}→${body.change_samples[0].option_price_changes[0].expected_additional_amount}` : ''}).` : ''}${body.unmatched_samples?.length ? ` 상품 미매칭: ${body.unmatched_samples[0].product_name}.` : ''}${body.unmatched_option_samples?.length ? ` 옵션 미매칭 예: ${body.unmatched_option_samples[0].product_name} / ${body.unmatched_option_samples[0].source_option}.` : ''} 원본: ${body.source_live ? '하루팜 실시간 API' : '검수 스냅샷'}, 실제 수정: ${body.write_enabled ? '활성' : '차단'}.`
+              : `미리보기 실패: ${body.error || 'unknown_error'}`;
+          })
+          .catch(() => { result.textContent = '미리보기 실패: network_error'; });
+      });
+      document.querySelector('#run').addEventListener('click', () => {
+        const result = document.querySelector('#run-result');
+        result.textContent = '가격·품절 정보를 반영 중…';
+        fetch('/api/sync/run', { method: 'POST', credentials: 'same-origin' })
+          .then(async (response) => ({ ok: response.ok, body: await response.json() }))
+          .then(({ ok, body }) => {
+            result.textContent = ok
+              ? `반영 완료: 상품 ${body.products_updated}개, 옵션 ${body.variants_updated}개 수정. 미매칭 상품 ${body.unmatched_products}개는 변경하지 않음.`
+              : `반영 실패: ${body.error || 'unknown_error'}`;
+          })
+          .catch(() => { result.textContent = '반영 실패: network_error'; });
+      });
+      document.querySelector('#import').addEventListener('click', () => {
+        const result = document.querySelector('#import-result');
+        result.textContent = '신규상품을 숨김·판매중지 상태로 등록 중…';
+        fetch('/api/sync/run', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'import_missing' }),
+        })
+          .then(async (response) => ({ ok: response.ok, body: await response.json() }))
+          .then(({ ok, body }) => {
+            result.textContent = ok
+              ? `등록 완료: 신규상품 ${body.created_products}개. 모두 진열안함·판매안함 상태입니다.`
+              : `등록 실패: ${body.error || 'unknown_error'}`;
+          })
+          .catch(() => { result.textContent = '등록 실패: network_error'; });
+      });
+      document.querySelector('#detail').addEventListener('click', () => {
+        const result = document.querySelector('#detail-result');
+        const start = Number(document.querySelector('#detail-start').value || 127);
+        result.textContent = '상세정보를 반영 중…';
+        fetch('/api/sync/run', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'detail_batch', from_product_no: start, limit: 25 }),
+        })
+          .then(async (response) => ({ ok: response.ok, body: await response.json() }))
+          .then(({ ok, body }) => {
+            result.textContent = ok
+              ? `상세정보 반영 완료: ${body.updated_products}개, 건너뜀 ${body.skipped_products}개. 다음 시작 상품번호 ${body.next_product_no}.`
+              : `상세정보 반영 실패: ${body.error || 'unknown_error'}`;
+            if (ok) {
+              document.querySelector('#detail-start').value = body.next_product_no;
+              localStorage.setItem('sanji-detail-start', String(body.next_product_no));
+            }
+          })
+          .catch(() => { result.textContent = '상세정보 반영 실패: network_error'; });
+      });
+      const fileAsDataUrl = (file) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      document.querySelector('#thumbnail-upload').addEventListener('click', async () => {
+        const files = [...document.querySelector('#thumbnail-files').files];
+        const result = document.querySelector('#thumbnail-result');
+        if (!files.length) {
+          result.textContent = '먼저 썸네일 파일을 선택해 주세요.';
+          return;
+        }
+        let completed = 0;
+        const failures = [];
+        for (const file of files) {
+          result.textContent = `썸네일 연결 중… ${completed}/${files.length}`;
+          try {
+            const image = await fileAsDataUrl(file);
+            const response = await fetch('/api/sync/run', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'image_upload', filename: file.name, image }),
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error || 'upload_failed');
+            completed += 1;
+          } catch (error) {
+            failures.push(`${file.name}: ${error.message}`);
+          }
+        }
+        result.textContent = failures.length
+          ? `완료 ${completed}/${files.length}. 실패 ${failures.length}개: ${failures.join(' / ')}`
+          : `썸네일 연결 완료: ${completed}개`;
+      });
+      const hostedThumbnails = [
+        'HARU-G0099_홍로사과가정용중과_v1.png',
+        'HARU-G0100_홍로사과가정용대과_v1.png',
+        'HARU-G0101_홍로사과못난이_v1.png',
+        'HARU-G0102_황도복숭아_v1.png',
+        'HARU-G0103_표고버섯정품_v1.png',
+        'HARU-G0104_꽈리고추정품_v1.png',
+        'HARU-G0105_모닝고추정품_v1.png',
+        'HARU-G0106_청양고추정품_v1.png',
+        'HARU-G0107_오이고추정품_v1.png',
+        'HARU-G0108_천도복숭아소과_v1.png',
+        'HARU-G0109_프리미엄사과9구선물세트_v1.png',
+        'HARU-G0110_프리미엄사과배선물세트_v1.png',
+        'HARU-G0111_프리미엄사과배샤인선물세트_v1.png',
+        'HARU-G0112_홍옥사과_v1.png',
+        'HARU-G0113_사과배선물세트_v1.png',
+        'HARU-G0114_배9구선물세트_v1.png',
+        'HARU-G0115_황금향선물용_v1.png',
+        'HARU-G0116_추희자두_v1.png',
+        'HARU-G0117_한입꿀고구마_v1.png',
+        'HARU-G0118_한입밤고구마_v1.png',
+        'HARU-G0119_청송사과선물세트_v1.png',
+        'HARU-G0120_사과3배3선물세트_v1.png',
+        'HARU-G0121_대봉곶감24구선물세트_v1.png',
+        'HARU-G0122_투뿔한우특수부위선물세트_v1.png',
+        'HARU-G0123_사과대추중_v1.png',
+        'HARU-G0124_사과대추특_v1.png',
+        'HARU-G0125_백도말랑이복숭아_v1.png',
+        'HARU-G0126_제스프리썬골드키위중대과_v1.png',
+      ];
+      document.querySelector('#hosted-thumbnail-upload').addEventListener('click', async () => {
+        const result = document.querySelector('#thumbnail-result');
+        let completed = 0;
+        const failures = [];
+        for (const filename of hostedThumbnails) {
+          result.textContent = `준비된 썸네일 연결 중… ${completed}/${hostedThumbnails.length}`;
+          try {
+            const response = await fetch('/api/sync/run', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'hosted_image_upload', filename }),
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error || 'upload_failed');
+            completed += 1;
+          } catch (error) {
+            failures.push(`${filename}: ${error.message}`);
+          }
+        }
+        result.textContent = failures.length
+          ? `완료 ${completed}/${hostedThumbnails.length}. 실패 ${failures.length}개: ${failures.join(' / ')}`
+          : `준비된 썸네일 연결 완료: ${completed}개`;
+      });
+    </script>
+  </body>
+</html>

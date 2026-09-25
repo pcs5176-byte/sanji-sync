@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cafe24 연결 결과</title>
+    <style>
+      body { margin: 0; background: #f4f7f3; color: #18301f; font-family: system-ui, -apple-system, sans-serif; }
+      main { max-width: 620px; margin: 12vh auto; padding: 40px; background: white; border-radius: 22px; box-shadow: 0 16px 50px #17351c18; }
+      p { line-height: 1.65; color: #48614e; }
+      a { color: #236b36; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 id="title">연결 결과</h1>
+      <p id="message"></p>
+      <a href="/">처음 화면으로</a>
+    </main>
+    <script>
+      const q = new URLSearchParams(location.search);
+      const ok = q.get('connected') === '1';
+      document.querySelector('#title').textContent = ok ? 'Cafe24 연결 완료' : 'Cafe24 연결 실패';
+      document.querySelector('#message').textContent = ok
+        ? `${q.get('mall_id') || ''} 쇼핑몰의 ${q.get('shop_no') || ''}번 멀티쇼핑몰이 연결되었습니다.`
+        : `오류 코드: ${q.get('error') || 'unknown_error'}`;
+      history.replaceState({}, '', '/connected.html');
+    </script>
+  </body>
+</html>
